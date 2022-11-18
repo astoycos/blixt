@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package backends;
 
+option go_package = "github.com/kong/blixt/internal/dataplane/client";
+
 message Vip {
     uint32 ip = 1;
     uint32 port = 2;
