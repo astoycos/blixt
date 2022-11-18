@@ -21,5 +21,10 @@ spec:
         image: ghcr.io/kong/blixt-dataplane:latest
         securityContext:
           privileged: true
-        args: ["eth0"]
+        args: ["--iface", "eth0"]
+        env:
+        - name: RUST_LOG
+          value: info
         imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9874
