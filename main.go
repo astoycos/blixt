@@ -52,7 +52,8 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
 		MetricsBindAddress:     metricsAddr,
 		Port:                   9443,
@@ -76,7 +77,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	clientsManager := client.NewBackendsClientManager()
+	clientsManager, err := client.NewBackendsClientManager(cfg)
+	if err != nil {
+		setupLog.Error(err, "unable to create backends client manager")
+	}
 
 	if err = (&controllers.GatewayReconciler{
 		Client: mgr.GetClient(),
