@@ -6,15 +6,16 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 	gatewayv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
@@ -35,7 +36,9 @@ type UDPRouteReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	log logr.Logger
+	log                   logr.Logger
+	ReconcileRequestChan  <-chan event.GenericEvent
+	BackendsClientManager *dataplane.BackendsClientManager
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -44,8 +47,8 @@ func (r *UDPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1alpha2.UDPRoute{}).
-		Watches(
-			&appsv1.DaemonSet{},
+		WatchesRawSource(
+			&source.Channel{Source: r.ReconcileRequestChan},
 			handler.EnqueueRequestsFromMapFunc(r.mapDataPlaneDaemonsetToUDPRoutes),
 		).
 		Watches(
@@ -185,18 +188,11 @@ func (r *UDPRouteReconciler) ensureUDPRouteConfiguredInDataPlane(ctx context.Con
 		return err
 	}
 
-	// TODO: add multiple endpoint support https://github.com/Kong/blixt/issues/46
-	dataplaneClient, err := dataplane.NewDataPlaneClient(context.Background(), r.Client)
-	if err != nil {
+	if _, err = r.BackendsClientManager.Update(ctx, targets); err != nil {
 		return err
 	}
 
-	confirmation, err := dataplaneClient.Update(context.Background(), targets)
-	if err != nil {
-		return err
-	}
-
-	r.log.Info(fmt.Sprintf("successful data-plane UPDATE, confirmation: %s", confirmation.String()))
+	r.log.Info("successful data-plane UPDATE")
 
 	return nil
 }
@@ -208,19 +204,12 @@ func (r *UDPRouteReconciler) ensureUDPRouteDeletedInDataPlane(ctx context.Contex
 		return err
 	}
 
-	// TODO: add multiple endpoint support https://github.com/Kong/blixt/issues/46
-	dataplaneClient, err := dataplane.NewDataPlaneClient(context.Background(), r.Client)
-	if err != nil {
-		return err
-	}
-
 	// delete the target from the dataplane
-	confirmation, err := dataplaneClient.Delete(context.Background(), targets.Vip)
-	if err != nil {
+	if _, err = r.BackendsClientManager.Delete(ctx, targets.Vip); err != nil {
 		return err
 	}
 
-	r.log.Info(fmt.Sprintf("successful data-plane DELETE, confirmation: %s", confirmation.String()))
+	r.log.Info("successful data-plane DELETE")
 
 	oldFinalizers := udproute.GetFinalizers()
 	newFinalizers := make([]string, 0, len(oldFinalizers)-1)
