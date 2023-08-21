@@ -77,7 +77,7 @@ pub fn handle_tcp_ingress(ctx: TcContext) -> Result<i32, i64> {
     unsafe {
         BLIXT_CONNTRACK.insert(
             &(*ip_hdr).saddr,
-            &(original_daddr, (*tcp_hdr).source.to_be() as u32),
+            &[original_daddr, (*tcp_hdr).source.to_be() as u32],
             0 as u64,
         )?;
     };

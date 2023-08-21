@@ -25,7 +25,7 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
     let ip_port_tuple = unsafe { BLIXT_CONNTRACK.get(&client_addr) }.ok_or(TC_ACT_PIPE)?;
 
     // verify traffic destination
-    if ip_port_tuple.1 as u16 != dest_port {
+    if ip_port_tuple[1] as u16 != dest_port {
         return Ok(TC_ACT_PIPE);
     }
 
@@ -33,12 +33,12 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
         &ctx,
         "Received TCP packet destined for tracked IP {:i}:{} setting source IP to VIP {:i}",
         u32::from_be(client_addr),
-        ip_port_tuple.1 as u16,
-        u32::from_be(ip_port_tuple.0),
+        ip_port_tuple[1] as u16,
+        u32::from_be(ip_port_tuple[0]),
     );
 
     unsafe {
-        (*ip_hdr).saddr = ip_port_tuple.0;
+        (*ip_hdr).saddr = ip_port_tuple[0];
     };
 
     if (ctx.data() + ETH_HDR_LEN + mem::size_of::<iphdr>()) > ctx.data_end() {
