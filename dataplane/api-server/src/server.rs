@@ -15,21 +15,24 @@ use tonic::{Request, Response, Status};
 use crate::backends::backends_server::Backends;
 use crate::backends::{Confirmation, InterfaceIndexConfirmation, PodIp, Targets, Vip};
 use crate::netutils::{if_name_for_routing_ip, if_nametoindex};
-use common::{Backend, BackendKey, BackendList, BACKENDS_ARRAY_CAPACITY};
+use common::{Backend, BackendKey, BackendList, ClientKey, TCPBackend, BACKENDS_ARRAY_CAPACITY};
 
 pub struct BackendService {
     backends_map: Arc<Mutex<HashMap<MapData, BackendKey, BackendList>>>,
     gateway_indexes_map: Arc<Mutex<HashMap<MapData, BackendKey, u16>>>,
+    tcp_conns_map: Arc<Mutex<HashMap<MapData, ClientKey, TCPBackend>>>,
 }
 
 impl BackendService {
     pub fn new(
         backends_map: HashMap<MapData, BackendKey, BackendList>,
         gateway_indexes_map: HashMap<MapData, BackendKey, u16>,
+        tcp_conns_map: HashMap<MapData, ClientKey, TCPBackend>,
     ) -> BackendService {
         BackendService {
             backends_map: Arc::new(Mutex::new(backends_map)),
             gateway_indexes_map: Arc::new(Mutex::new(gateway_indexes_map)),
+            tcp_conns_map: Arc::new(Mutex::new(tcp_conns_map)),
         }
     }
 
@@ -51,6 +54,31 @@ impl BackendService {
         backends_map.remove(&key)?;
         let mut gateway_indexes_map = self.gateway_indexes_map.lock().await;
         gateway_indexes_map.remove(&key)?;
+
+        // Delete all entries in our tcp connection tracking map that this backend
+        // key was related to. This is needed because the TCPRoute might have been
+        // deleted with TCP connection(s) still open, so without the below logic
+        // they'll hang around forever.
+        // Its better to do this rather than maintain a reverse index because the index
+        // would need to be updated with each new connection. With remove being a less
+        // frequently used operation, the performance cost is less visible.
+        let mut tcp_conns_map = self.tcp_conns_map.lock().await;
+        let mut expired_client_keys: Vec<ClientKey> = vec![];
+        tcp_conns_map.iter().for_each(|val| {
+            if let Ok((client_key, tcp_backned)) = val {
+                let bk = BackendKey {
+                    ip: u32::from_be(key.ip),
+                    port: u16::from_be(key.port as u16) as u32,
+                };
+                if tcp_backned.backend_key == bk {
+                    expired_client_keys.push(client_key);
+                }
+            }
+        });
+
+        for ck in expired_client_keys {
+            tcp_conns_map.remove(&ck)?;
+        }
         Ok(())
     }
 }
@@ -144,9 +172,10 @@ impl Backends for BackendService {
         match self.insert_and_reset_index(key, backend_list).await {
             Ok(_) => Ok(Response::new(Confirmation {
                 confirmation: format!(
-                    "success, vip {}:{} was updated",
+                    "success, vip {}:{} was updated with {} backends",
                     Ipv4Addr::from(vip.ip),
-                    vip.port
+                    vip.port,
+                    count,
                 ),
             })),
             Err(err) => Err(Status::internal(format!("failure: {}", err))),

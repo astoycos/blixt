@@ -12,11 +12,12 @@ use aya_bpf::{
     programs::TcContext,
 };
 use aya_log_ebpf::info;
+use common::{ClientKey, TCPBackend, TCPState};
 use network_types::{eth::EthHdr, ip::Ipv4Hdr, tcp::TcpHdr};
 
 use crate::{
-    utils::{csum_fold_helper, ptr_at},
-    BLIXT_CONNTRACK,
+    utils::{csum_fold_helper, handle_tcp_conn_close, ptr_at},
+    TCP_CONNECTIONS,
 };
 
 pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
@@ -29,24 +30,26 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
 
     // capture some IP and port information
     let client_addr = unsafe { (*ip_hdr).dst_addr };
-    let dest_port = unsafe { (*tcp_hdr).dest.to_be() };
-    let ip_port_tuple = unsafe { BLIXT_CONNTRACK.get(&client_addr) }.ok_or(TC_ACT_PIPE)?;
-
-    // verify traffic destination
-    if ip_port_tuple.1 as u16 != dest_port {
-        return Ok(TC_ACT_PIPE);
-    }
+    let dest_port = unsafe { (*tcp_hdr).dest };
+    // The source identifier
+    let client_key = ClientKey {
+        ip: u32::from_be(client_addr),
+        port: u16::from_be(dest_port) as u32,
+    };
+    let tcp_backend = unsafe { TCP_CONNECTIONS.get(&client_key) }.ok_or(TC_ACT_PIPE)?;
 
     info!(
         &ctx,
-        "Received TCP packet destined for tracked IP {:i}:{} setting source IP to VIP {:i}",
+        "Received TCP packet destined for tracked IP {:i}:{} setting source IP to VIP {:i}:{}",
         u32::from_be(client_addr),
-        ip_port_tuple.1 as u16,
-        u32::from_be(ip_port_tuple.0),
+        u16::from_be(dest_port),
+        tcp_backend.backend_key.ip,
+        tcp_backend.backend_key.port,
     );
 
+    // SNAT the ip address
     unsafe {
-        (*ip_hdr).src_addr = ip_port_tuple.0;
+        (*ip_hdr).src_addr = tcp_backend.backend_key.ip;
     };
 
     if (ctx.data() + EthHdr::LEN + Ipv4Hdr::LEN) > ctx.data_end() {
@@ -68,6 +71,39 @@ pub fn handle_tcp_egress(ctx: TcContext) -> Result<i32, i64> {
     unsafe { (*tcp_hdr).check = 0 };
 
     // TODO: connection tracking cleanup https://github.com/kubernetes-sigs/blixt/issues/85
+    // SNAT the port
+    unsafe { (*tcp_hdr).source = tcp_backend.backend_key.port as u16 };
+
+    let tcp_hdr_ref = unsafe { tcp_hdr.as_ref().ok_or(TC_ACT_OK)? };
+
+    // If the packet has the RST flag set, it means the connection is being terminated, so remove it
+    // from our map.
+    if tcp_hdr_ref.rst() == 1 {
+        unsafe {
+            TCP_CONNECTIONS.remove(&client_key)?;
+        }
+    }
+
+    let mut tcp_state = tcp_backend.state;
+    let moved = handle_tcp_conn_close(tcp_hdr_ref, &mut tcp_state);
+    // If the connection has moved to the Closed state, stop tracking it.
+    if let TCPState::Closed = tcp_state {
+        unsafe {
+            TCP_CONNECTIONS.remove(&client_key)?;
+        }
+    // If the connection has not reached the Closed state yet, but it did advance to a new state,
+    // then record the new state.
+    } else if moved {
+        let bk = *tcp_backend;
+        let new_tcp_backend = TCPBackend {
+            backend: bk.backend,
+            backend_key: bk.backend_key,
+            state: tcp_state,
+        };
+        unsafe {
+            TCP_CONNECTIONS.insert(&client_key, &new_tcp_backend, 0_u64)?;
+        }
+    }
 
     Ok(TC_ACT_PIPE)
 }
