@@ -80,7 +80,6 @@ jobs:
         with:
           toolchain: stable
           profile: minimal
-          #   components: rustfmt, clippy
           override: true
       - name: Check formatting
         run: |
@@ -136,6 +135,11 @@ jobs:
         uses: docker/setup-buildx-action@c74574e6c82eeedc46366be1b0d287eff9085eb6
         with:
           install: true
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
       - name: Check formatting
         run: |
           cargo fmt --manifest-path dataplane/Cargo.toml --all -- --check
