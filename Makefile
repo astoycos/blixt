@@ -130,17 +130,23 @@ vet: ## Run go vet against code.
 lint:
 	golangci-lint run
 
-.PHONY: format.rust.helper
-format.rust.helper: 
+.PHONY: check.format.rust.helper
+check.format.rust.helper: 
 	@echo "Checking formatting $(DIRECTORY)..."
 	cargo fmt --manifest-path $(DIRECTORY)/Cargo.toml --all -- --check
 
-.PHONY: format.rust
-format.rust: 
-# More hard-coded than I'd like, but it's non-trivial to recursively identify 
-# the minimal set of top-level Cargo.toml files we need to target
-	@$(MAKE) format.rust.helper DIRECTORY=dataplane
-	@$(MAKE) format.rust.helper DIRECTORY=tools/udp-test-server
+.PHONY: fix.format.rust.helper
+fix.format.rust.helper:
+	@echo "Fixing formatting $(DIRECTORY)..."
+	cargo fmt --manifest-path $(DIRECTORY)/Cargo.toml --all
+
+.PHONY: fix.format.rust
+fix.format.rust:
+	@find . -name 'Cargo.toml' -type f -exec dirname {} \; | xargs -I {} $(MAKE) fix.format.rust.helper DIRECTORY={}
+
+.PHONY: check.format.rust
+check.format.rust:
+	@find . -name 'Cargo.toml' -type f -exec dirname {} \; | xargs -I {} $(MAKE) check.format.rust.helper DIRECTORY={}
 
 .PHONY: lint.rust.helper
 lint.rust.helper:
@@ -148,9 +154,8 @@ lint.rust.helper:
 	@cd $(DIRECTORY) && cargo clippy --all -- -D warnings
 
 .PHONY: lint.rust
-lint.rust: 
-	@$(MAKE) lint.rust DIRECTORY=dataplane
-	@$(MAKE) lint.rust DIRECTORY=tools/udp-test-server
+lint.rust:
+	@find . -name 'Cargo.toml' -type f -exec dirname {} \; | xargs -I {} $(MAKE) lint.rust.helper DIRECTORY={}
 
 .PHONY: test
 test: manifests generate fmt vet envtest ## Run tests.
