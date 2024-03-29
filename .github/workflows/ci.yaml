@@ -81,16 +81,10 @@ jobs:
           toolchain: stable
           profile: minimal
           override: true
-      - name: Check formatting
-        run: |
-          cargo fmt --manifest-path dataplane/Cargo.toml --all -- --check
-          cargo fmt --manifest-path tools/udp-test-server/Cargo.toml --all -- --check
-      - name: Run clippy
-        run: |
-          BASE_DIR=$(pwd)
-          cd dataplane && cargo clippy --all -- --deny warnings
-          cd $BASE_DIR
-          cd tools/udp-test-server && cargo clippy --all -- -D warnings
+      - name: Check Rust formatting
+        run: make format.rust
+      - name: Lint Rust
+        run: make lint.rust
       - name: Docker build - Control Plane
         uses: docker/build-push-action@c56af957549030174b10d6867f20e78cfd7debc5
         with:
@@ -140,16 +134,10 @@ jobs:
           toolchain: stable
           profile: minimal
           override: true
-      - name: Check formatting
-        run: |
-          cargo fmt --manifest-path dataplane/Cargo.toml --all -- --check
-          cargo fmt --manifest-path tools/udp-test-server/Cargo.toml --all -- --check
-      - name: Run clippy
-        run: |
-          BASE_DIR=$(pwd)
-          cd dataplane && cargo clippy --all -- --deny warnings
-          cd $BASE_DIR
-          cd tools/udp-test-server && cargo clippy --all -- -D warnings
+      - name: Check Rust formatting
+        run: make format.rust
+      - name: Lint Rust
+        run: make lint.rust
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
         with:
