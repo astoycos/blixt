@@ -135,7 +135,7 @@ jobs:
           profile: minimal
           override: true
       - name: Check Rust formatting
-        run: check.format.rust
+        run: make check.format.rust
       - name: Lint Rust
         run: make lint.rust
       - name: Login to GitHub Container Registry
